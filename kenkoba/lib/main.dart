@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+/// ------------------------------
+/// 課題
+/// ------------------------------
+
 void main() {
   runApp(const MyApp());
 }
