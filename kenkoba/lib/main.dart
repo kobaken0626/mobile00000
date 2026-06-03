@@ -25,9 +25,12 @@ class Shift {
   final int weekdayWage;      
   final int holidayWage;      
   final int startHour;
+  final int startMinute; 
   final int endHour;
+  final int endMinute;   
   final int breakMinutes;
   final bool isCheckedOut; 
+  final bool isPaidHoliday; 
 
   Shift({
     required this.date,
@@ -35,15 +38,22 @@ class Shift {
     required this.weekdayWage,
     required this.holidayWage,
     required this.startHour,
+    this.startMinute = 0,
     required this.endHour,
+    this.endMinute = 0,
     required this.breakMinutes,
     this.isCheckedOut = false,
+    this.isPaidHoliday = false, 
   });
 
-  int get workMinutes =>
-      ((endHour - startHour) * 60) - breakMinutes;
+  int get workMinutes {
+    final startTotal = (startHour * 60) + startMinute;
+    final endTotal = (endHour * 60) + endMinute;
+    return (endTotal - startTotal) - breakMinutes;
+  }
 
   int get salary {
+    if (isPaidHoliday) return 0; 
     final isHoliday =
         date.weekday == DateTime.saturday ||
         date.weekday == DateTime.sunday;
@@ -89,6 +99,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int index = 1; 
   DateTime selectedCalendarDate = DateTime.now();
+  DateTime currentMonthView = DateTime.now(); 
 
   final List<Job> jobs = [
     Job(name: 'コンビニA', weekdayWage: 1100, holidayWage: 1200),
@@ -104,13 +115,15 @@ class _MainScreenState extends State<MainScreen> {
     final defaultJob = jobs.first;
 
     const startHour = 10;       
-    final endHour = today.hour;  
-    final endMinutes = today.minute; 
+    const startMinute = 0;
+    
+    final endHour = today.hour;     
+    final endMinute = today.minute; 
     const breakMin = 0;          
 
-    final realWorkMinutes = ((endHour - startHour) * 60) + endMinutes - breakMin;
-
-    if (realWorkMinutes <= 0) {
+    final startTotal = (startHour * 60) + startMinute;
+    final endTotal = (endHour * 60) + endMinute;
+    if ((endTotal - startTotal) <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('出勤時間（10:00）を過ぎてから退勤を押してください')),
       );
@@ -127,14 +140,17 @@ class _MainScreenState extends State<MainScreen> {
           weekdayWage: defaultJob.weekdayWage,
           holidayWage: defaultJob.holidayWage,
           startHour: startHour,
+          startMinute: startMinute,
           endHour: endHour,
-          breakMinutes: breakMin - endMinutes, 
+          endMinute: endMinute, 
+          breakMinutes: breakMin, 
           isCheckedOut: true, 
+          isPaidHoliday: false,
         ),
       );
     });
 
-    final displayMinute = endMinutes.toString().padLeft(2, '0');
+    final displayMinute = endMinute.toString().padLeft(2, '0');
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('退勤を完了しました！ ($startHour:00 〜 $endHour:$displayMinute)')),
     );
@@ -164,14 +180,22 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
+  void changeMonth(int offset) {
+    setState(() {
+      currentMonthView = DateTime(currentMonthView.year, currentMonthView.month + offset, 1);
+      selectedCalendarDate = DateTime(currentMonthView.year, currentMonthView.month, 1);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    // ★ 修正ポイント：ここにあった不要な「const」を徹底的に排除しました
     final screens = [
       HomeScreen(shifts: shifts, onQuickCheckOut: addQuickCheckOutShift),
       CalendarScreen(
         shifts: shifts,
         selectedDate: selectedCalendarDate,
+        currentMonth: currentMonthView, 
+        onMonthChange: changeMonth,     
         onDateSelected: (date) {
           setState(() {
             selectedCalendarDate = date; 
@@ -262,7 +286,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               const Text(
-                '※既存のデータがある場合は上書き修正され、「退勤済み」になります。',
+                '※既存のデータがある場合は自動で時間が上書きされ、「退勤済み」になります。',
                 style: TextStyle(fontSize: 13, color: Colors.grey),
                 textAlign: TextAlign.center,
               )
@@ -275,17 +299,21 @@ class HomeScreen extends StatelessWidget {
 }
 
 /// ------------------------------
-/// カレンダー画面（左右2カラム分割レイアウト）
+/// カレンダー画面（★正確な曜日配置に修正）
 /// ------------------------------
 class CalendarScreen extends StatelessWidget {
   final List<Shift> shifts;
   final DateTime selectedDate;
+  final DateTime currentMonth; 
+  final Function(int) onMonthChange; 
   final ValueChanged<DateTime> onDateSelected;
   final VoidCallback onEditPressed; 
 
   const CalendarScreen({
     required this.shifts,
     required this.selectedDate,
+    required this.currentMonth,
+    required this.onMonthChange,
     required this.onDateSelected,
     required this.onEditPressed,
     super.key,
@@ -293,8 +321,6 @@ class CalendarScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
-
     final dayShifts = shifts.where((s) =>
         s.date.day == selectedDate.day &&
         s.date.month == selectedDate.month &&
@@ -303,13 +329,43 @@ class CalendarScreen extends StatelessWidget {
 
     final weekDays = ['日', '月', '火', '水', '木', '金', '土'];
 
+    // 💡 ★【重要】曜日を完全に合わせるための計算ロジック
+    // 1. 表示している月の「1日」の曜日を取得 (DateTime.sunday=7, DateTime.monday=1...)
+    final firstDayOfMonth = DateTime(currentMonth.year, currentMonth.month, 1);
+    // 週の始まりを「日曜日（0）」にするため、Flutterの1(月)〜7(日)を変換
+    final int startEmptySpaces = firstDayOfMonth.weekday == DateTime.sunday ? 0 : firstDayOfMonth.weekday;
+
+    // 2. 当月の末日（日数）を取得
+    final totalDaysInMonth = DateTime(currentMonth.year, currentMonth.month + 1, 0).day;
+
+    // 3. グリッドに並べる総マス数（空白マス ＋ 当月の日数）
+    final totalGridItems = startEmptySpaces + totalDaysInMonth;
+
     return Scaffold(
       appBar: AppBar(
         title: Row(
           children: [
             const Icon(Icons.calendar_month, color: Colors.white),
+            const SizedBox(width: 16),
+            Text('${currentMonth.year}年 ${currentMonth.month}月', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            const Spacer(),
+            IconButton(
+              icon: const Icon(Icons.arrow_back_ios, color: Colors.white, size: 18),
+              onPressed: () => onMonthChange(-1),
+            ),
+            TextButton(
+              onPressed: () => onMonthChange(-1),
+              child: const Text('前月', style: TextStyle(color: Colors.white)),
+            ),
             const SizedBox(width: 12),
-            Text('${now.year}年 ${now.month}月', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            TextButton(
+              onPressed: () => onMonthChange(1),
+              child: const Text('次月', style: TextStyle(color: Colors.white)),
+            ),
+            IconButton(
+              icon: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 18),
+              onPressed: () => onMonthChange(1),
+            ),
           ],
         ),
         backgroundColor: const Color(0xFF689F38),
@@ -319,98 +375,116 @@ class CalendarScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           
-          // 【左カラム：コンパクトなカレンダー構造】
-          Container(
-            width: 450, 
-            decoration: BoxDecoration(
-              border: Border(
-                right: BorderSide(color: Colors.grey.withOpacity(0.3), width: 1),
+          // 【左カラム：カレンダー全体 2/3】
+          Expanded(
+            flex: 2, 
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(right: BorderSide(color: Colors.grey.withOpacity(0.3), width: 1)),
               ),
-            ),
-            padding: const EdgeInsets.only(top: 16, left: 8, right: 8),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: weekDays.map((day) {
-                    return Expanded(
-                      child: Center(
-                        child: Text(
-                          day,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: day == '日' ? Colors.red : (day == '土' ? Colors.blue : Colors.black54),
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: weekDays.map((day) {
+                      return Expanded(
+                        child: Center(
+                          child: Text(
+                            day,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: day == '日' ? Colors.red : (day == '土' ? Colors.blue : Colors.black54),
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 8),
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 7,
-                    childAspectRatio: 1.2, 
+                      );
+                    }).toList(),
                   ),
-                  itemCount: 31,
-                  itemBuilder: (context, index) {
-                    final day = index + 1;
-                    final targetDate = DateTime(now.year, now.month, day);
-                    final isSelected = selectedDate.day == day;
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: GridView.builder(
+                      physics: const NeverScrollableScrollPhysics(),
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 7,
+                        childAspectRatio: 1.4, 
+                      ),
+                      itemCount: totalGridItems, // ★ 空白を含めた総マス数に変更
+                      itemBuilder: (context, index) {
+                        // 1日の曜日より手前のマスは、前月の「空白マス」として描画する
+                        if (index < startEmptySpaces) {
+                          return const SizedBox(); // 何も表示しない空のマス
+                        }
 
-                    final hasShift = shifts.any((s) =>
-                        s.date.day == day && s.date.month == now.month && s.date.year == now.year);
+                        // 実際の「日にち」を割り出す
+                        final day = index - startEmptySpaces + 1;
+                        final targetDate = DateTime(currentMonth.year, currentMonth.month, day);
+                        final isSelected = selectedDate.day == day && selectedDate.month == currentMonth.month && selectedDate.year == currentMonth.year;
 
-                    return GestureDetector(
-                      onTap: () => onDateSelected(targetDate),
-                      child: Container(
-                        margin: const EdgeInsets.all(3),
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? const Color(0xFFC8E6C9) 
-                              : (hasShift ? Colors.grey.shade50 : Colors.white),
-                          borderRadius: BorderRadius.circular(4),
-                          border: isSelected ? Border.all(color: const Color(0xFF689F38), width: 1.5) : null,
-                        ),
-                        child: Stack(
-                          children: [
-                            Center(
-                              child: Text(
-                                '$day',
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  color: isSelected ? const Color(0xFF2E7D32) : Colors.black87,
-                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                ),
-                              ),
+                        final dayTargetShifts = shifts.where((s) =>
+                            s.date.day == day && s.date.month == currentMonth.month && s.date.year == currentMonth.year).toList();
+                        final hasShift = dayTargetShifts.isNotEmpty;
+                        final isDayCheckedOut = hasShift && dayTargetShifts.first.isCheckedOut;
+
+                        Color tileColor = Colors.white;
+                        if (isSelected) {
+                          tileColor = const Color(0xFFC8E6C9); 
+                        } else if (hasShift) {
+                          tileColor = isDayCheckedOut ? const Color(0xFFE8F5E9) : const Color(0xFFFFF3E0);
+                        }
+
+                        return GestureDetector(
+                          onTap: () => onDateSelected(targetDate),
+                          child: Container(
+                            margin: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: tileColor,
+                              borderRadius: BorderRadius.circular(6),
+                              border: isSelected 
+                                  ? Border.all(color: const Color(0xFF689F38), width: 2) 
+                                  : Border.all(color: hasShift ? (isDayCheckedOut ? Colors.green.shade200 : Colors.orange.shade200) : Colors.grey.shade100),
                             ),
-                            if (hasShift)
-                              Positioned(
-                                bottom: 6,
-                                left: 0,
-                                right: 0,
-                                child: Center(
-                                  child: Container(
-                                    width: 5, height: 5,
-                                    decoration: const BoxDecoration(color: Color(0xFF689F38), shape: BoxShape.circle),
+                            child: Stack(
+                              children: [
+                                Center(
+                                  child: Text(
+                                    '$day',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: isSelected ? const Color(0xFF2E7D32) : (hasShift ? (isDayCheckedOut ? Colors.green.shade900 : Colors.orange.shade900) : Colors.black87),
+                                      fontWeight: isSelected || hasShift ? FontWeight.bold : FontWeight.normal,
+                                    ),
                                   ),
                                 ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ],
+                                if (hasShift)
+                                  Positioned(
+                                    bottom: 8, left: 0, right: 0,
+                                    child: Center(
+                                      child: Container(
+                                        width: 6, height: 6,
+                                        decoration: BoxDecoration(
+                                          color: isDayCheckedOut ? const Color(0xFF689F38) : Colors.orange, 
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           
-          // 【右カラム：選択日の勤務詳細タイムライン風】
+          // 【右カラム：勤務詳細エリア 1/3】
           Expanded(
+            flex: 1, 
             child: Container(
               color: Colors.grey.shade50,
               padding: const EdgeInsets.all(24),
@@ -418,7 +492,7 @@ class CalendarScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${selectedDate.year}年 ${selectedDate.month}月${selectedDate.day}日 勤務詳細',
+                    '${selectedDate.month}月${selectedDate.day}日 勤務詳細',
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
                   ),
                   const SizedBox(height: 20),
@@ -426,7 +500,7 @@ class CalendarScreen extends StatelessWidget {
                   Expanded(
                     child: currentShift == null
                         ? const Center(
-                            child: Text('この日の予定・勤務情報はありません', style: TextStyle(color: Colors.black45, fontSize: 15)),
+                            child: Text('予定・勤務情報はありません', style: TextStyle(color: Colors.black45, fontSize: 14)),
                           )
                         : ListView(
                             children: [
@@ -436,52 +510,76 @@ class CalendarScreen extends StatelessWidget {
                                 margin: EdgeInsets.zero,
                                 child: Padding(
                                   padding: const EdgeInsets.all(16),
-                                  child: Row(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Container(
-                                        width: 4, height: 50,
-                                        color: const Color(0xFF689F38),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                         children: [
-                                          Text('${currentShift.startHour}:00', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                                          Text(
-                                            '${currentShift.endHour}:${((currentShift.workMinutes % 60) + currentShift.breakMinutes) > 0 ? ((currentShift.workMinutes % 60) + currentShift.breakMinutes).toString().padLeft(2, '0') : '00'}', 
-                                            style: const TextStyle(fontSize: 14, color: Colors.black54),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(width: 24),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(currentShift.jobName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                                            const SizedBox(height: 4),
-                                            Text('労働時間: ${(currentShift.workMinutes / 60).toStringAsFixed(2)}時間', style: const TextStyle(fontSize: 13, color: Colors.black54)),
-                                          ],
-                                        ),
-                                      ),
-                                      Column(
-                                        crossAxisAlignment: CrossAxisAlignment.end,
-                                        children: [
-                                          Text('¥${currentShift.salary}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF689F38))),
-                                          const SizedBox(height: 4),
+                                          Text(currentShift.jobName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                                           Container(
                                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                             decoration: BoxDecoration(
-                                              color: currentShift.isCheckedOut ? Colors.green.shade50 : Colors.orange.shade50,
+                                              color: currentShift.isPaidHoliday 
+                                                  ? Colors.blue.shade50 
+                                                  : (currentShift.isCheckedOut ? Colors.green.shade50 : Colors.orange.shade50),
                                               borderRadius: BorderRadius.circular(4),
                                             ),
                                             child: Text(
-                                              currentShift.isCheckedOut ? '退勤済み' : 'シフト予定',
-                                              style: TextStyle(fontSize: 11, color: currentShift.isCheckedOut ? Colors.green.shade800 : Colors.orange.shade800, fontWeight: FontWeight.bold),
+                                              currentShift.isPaidHoliday 
+                                                  ? '有給休暇' 
+                                                  : (currentShift.isCheckedOut ? '退勤済み' : 'シフト予定'),
+                                              style: TextStyle(
+                                                fontSize: 11, 
+                                                color: currentShift.isPaidHoliday 
+                                                    ? Colors.blue.shade800 
+                                                    : (currentShift.isCheckedOut ? Colors.green.shade800 : Colors.orange.shade800), 
+                                                fontWeight: FontWeight.bold,
+                                              ),
                                             ),
                                           ),
                                         ],
                                       ),
+                                      const Divider(height: 24),
+                                      
+                                      if (currentShift.isPaidHoliday) ...[
+                                        const Row(
+                                          children: [
+                                            Icon(Icons.star, size: 18, color: Colors.blue),
+                                            SizedBox(width: 8),
+                                            Text('本日は有給休暇です', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blue)),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        const Text('労働時間・見込給料は発生しません。', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                                      ] else ...[
+                                        Row(
+                                          children: [
+                                            const Icon(Icons.access_time, size: 18, color: Colors.black54),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              '時間: ${currentShift.startHour}:${currentShift.startMinute.toString().padLeft(2, '0')} 〜 ${currentShift.endHour}:${currentShift.endMinute.toString().padLeft(2, '0')}',
+                                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          children: [
+                                            const Icon(Icons.hourglass_bottom, size: 18, color: Colors.black54),
+                                            const SizedBox(width: 8),
+                                            Text('労働: ${(currentShift.workMinutes / 60).toStringAsFixed(2)}時間', style: const TextStyle(fontSize: 14)),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          children: [
+                                            const Icon(Icons.payments, size: 18, color: Color(0xFF689F38)),
+                                            const SizedBox(width: 8),
+                                            Text('見込給料: ¥${currentShift.salary}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF689F38))),
+                                          ],
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),
@@ -503,7 +601,7 @@ class CalendarScreen extends StatelessWidget {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       ),
                       icon: const Icon(Icons.edit, size: 18),
-                      label: Text(currentShift == null ? '勤務情報を新規追加する' : 'この日の勤務情報を修正する', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                      label: Text(currentShift == null ? '情報を新規追加' : '勤務情報を修正', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
@@ -541,10 +639,14 @@ class _ShiftInputSheetState extends State<ShiftInputSheet> {
   String? selectedJobName;
   final weekdayWageController = TextEditingController();
   final holidayWageController = TextEditingController();
-  final start = TextEditingController();
-  final end = TextEditingController();
+  final startH = TextEditingController();
+  final startM = TextEditingController();
+  final endH = TextEditingController();
+  final endM = TextEditingController();
   final rest = TextEditingController();
-  bool isCheckedOut = true; 
+  
+  bool isCheckedOut = false;    
+  bool isPaidHoliday = false;   
 
   @override
   void initState() {
@@ -560,25 +662,37 @@ class _ShiftInputSheetState extends State<ShiftInputSheet> {
       selectedJobName = s.jobName;
       weekdayWageController.text = s.weekdayWage.toString();
       holidayWageController.text = s.holidayWage.toString();
-      start.text = s.startHour.toString();
-      end.text = s.endHour.toString();
-      rest.text = s.breakMinutes < 0 ? '0' : s.breakMinutes.toString();
+      startH.text = s.startHour.toString();
+      startM.text = s.startMinute.toString();
+      endH.text = s.endHour.toString();
+      endM.text = s.endMinute.toString();
+      rest.text = s.breakMinutes.toString();
       isCheckedOut = s.isCheckedOut;
-    } else if (widget.jobs.isNotEmpty) {
-      selectedJobName = widget.jobs.first.name;
-      weekdayWageController.text = widget.jobs.first.weekdayWage.toString();
-      holidayWageController.text = widget.jobs.first.holidayWage.toString();
+      isPaidHoliday = s.isPaidHoliday;
+    } else {
+      startH.text = '10';
+      startM.text = '0';
+      endH.text = '17';
+      endM.text = '0';
+      rest.text = '0';
+      if (widget.jobs.isNotEmpty) {
+        selectedJobName = widget.jobs.first.name;
+        weekdayWageController.text = widget.jobs.first.weekdayWage.toString();
+        holidayWageController.text = widget.jobs.first.holidayWage.toString();
+      }
     }
   }
 
-  void applyHistory(Shift historicalShift) {
+  void applyHistory(Shift h) {
     setState(() {
-      selectedJobName = historicalShift.jobName;
-      weekdayWageController.text = historicalShift.weekdayWage.toString();
-      holidayWageController.text = historicalShift.holidayWage.toString();
-      start.text = historicalShift.startHour.toString();
-      end.text = historicalShift.endHour.toString();
-      rest.text = historicalShift.breakMinutes < 0 ? '0' : historicalShift.breakMinutes.toString();
+      selectedJobName = h.jobName;
+      weekdayWageController.text = h.weekdayWage.toString();
+      holidayWageController.text = h.holidayWage.toString();
+      startH.text = h.startHour.toString();
+      startM.text = h.startMinute.toString();
+      endH.text = h.endHour.toString();
+      endM.text = h.endMinute.toString();
+      rest.text = h.breakMinutes.toString();
     });
   }
 
@@ -588,7 +702,7 @@ class _ShiftInputSheetState extends State<ShiftInputSheet> {
 
     final Map<String, Shift> historyMap = {};
     for (var s in widget.shifts) {
-      final key = '${s.startHour}-${s.endHour}-${s.jobName}';
+      final key = '${s.startHour}-${s.startMinute}-${s.endHour}-${s.endMinute}-${s.jobName}';
       historyMap[key] = s;
     }
     final historyList = historyMap.values.toList().reversed.take(3).toList();
@@ -612,10 +726,8 @@ class _ShiftInputSheetState extends State<ShiftInputSheet> {
           Wrap(
             spacing: 8, runSpacing: 4,
             children: historyList.map((h) {
-              final actMin = (h.workMinutes % 60) + h.breakMinutes;
-              final dispMin = actMin > 0 ? actMin.toString().padLeft(2, '0') : '00';
               return ActionChip(
-                label: Text('${h.startHour}:00〜${h.endHour}:$dispMin (${h.jobName})', style: const TextStyle(fontSize: 12)),
+                label: Text('${h.startHour}:${h.startMinute.toString().padLeft(2,'0')}〜${h.endHour}:${h.endMinute.toString().padLeft(2,'0')} (${h.jobName})', style: const TextStyle(fontSize: 12)),
                 onPressed: () => applyHistory(h),
                 backgroundColor: Colors.green.shade50,
               );
@@ -638,23 +750,38 @@ class _ShiftInputSheetState extends State<ShiftInputSheet> {
           },
         ),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(child: TextField(controller: weekdayWageController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '平日時給（円）', border: OutlineInputBorder()))),
-            const SizedBox(width: 12),
-            Expanded(child: TextField(controller: holidayWageController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '休日時給（円）', border: OutlineInputBorder()))),
-          ],
+        
+        Opacity(
+          opacity: isPaidHoliday ? 0.4 : 1.0,
+          child: AbsorbPointer(
+            absorbing: isPaidHoliday,
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: TextField(controller: weekdayWageController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '平日時給（円）', border: OutlineInputBorder()))),
+                    const SizedBox(width: 12),
+                    Expanded(child: TextField(controller: holidayWageController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '休日時給（円）', border: OutlineInputBorder()))),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(child: TextField(controller: startH, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '出勤（時）', border: OutlineInputBorder()))),
+                    const SizedBox(width: 8),
+                    Expanded(child: TextField(controller: startM, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '出勤（分）', border: OutlineInputBorder()))),
+                    const SizedBox(width: 16),
+                    Expanded(child: TextField(controller: endH, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '退勤（時）', border: OutlineInputBorder()))),
+                    const SizedBox(width: 8),
+                    Expanded(child: TextField(controller: endM, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '退勤（分）', border: OutlineInputBorder()))),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextField(controller: rest, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '休憩時間（分）', border: OutlineInputBorder())),
+              ],
+            ),
+          ),
         ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(child: TextField(controller: start, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '出勤（時）', border: OutlineInputBorder()))),
-            const SizedBox(width: 12),
-            Expanded(child: TextField(controller: end, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '退勤（時）', border: OutlineInputBorder()))),
-          ],
-        ),
-        const SizedBox(height: 12),
-        TextField(controller: rest, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '休憩時間（分）', border: OutlineInputBorder())),
         
         const SizedBox(height: 8),
         CheckboxListTile(
@@ -663,9 +790,28 @@ class _ShiftInputSheetState extends State<ShiftInputSheet> {
           controlAffinity: ListTileControlAffinity.leading,
           contentPadding: EdgeInsets.zero,
           activeColor: const Color(0xFF689F38),
+          onChanged: isPaidHoliday ? null : (val) { 
+            setState(() {
+              isCheckedOut = val ?? false;
+            });
+          },
+        ),
+        
+        CheckboxListTile(
+          title: Text(
+            '有給休暇として記録する（給料計算は¥0になります）', 
+            style: TextStyle(fontSize: 14, color: Colors.blue.shade700, fontWeight: FontWeight.w600),
+          ),
+          value: isPaidHoliday,
+          controlAffinity: ListTileControlAffinity.leading,
+          contentPadding: EdgeInsets.zero,
+          activeColor: Colors.blue,
           onChanged: (val) {
             setState(() {
-              isCheckedOut = val ?? true;
+              isPaidHoliday = val ?? false;
+              if (isPaidHoliday) {
+                isCheckedOut = false; 
+              }
             });
           },
         ),
@@ -679,7 +825,7 @@ class _ShiftInputSheetState extends State<ShiftInputSheet> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           ),
           onPressed: () {
-            if (selectedJobName == null || weekdayWageController.text.isEmpty || holidayWageController.text.isEmpty || start.text.isEmpty || end.text.isEmpty || rest.text.isEmpty) {
+            if (selectedJobName == null || weekdayWageController.text.isEmpty || holidayWageController.text.isEmpty || startH.text.isEmpty || startM.text.isEmpty || endH.text.isEmpty || endM.text.isEmpty || rest.text.isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('すべての項目を入力してください')));
               return;
             }
@@ -695,10 +841,13 @@ class _ShiftInputSheetState extends State<ShiftInputSheet> {
                 jobName: selectedJobName!,
                 weekdayWage: int.parse(weekdayWageController.text),
                 holidayWage: int.parse(holidayWageController.text),
-                startHour: int.parse(start.text),
-                endHour: int.parse(end.text),
+                startHour: int.parse(startH.text),
+                startMinute: int.parse(startM.text),
+                endHour: int.parse(endH.text),
+                endMinute: int.parse(endM.text),
                 breakMinutes: int.parse(rest.text),
                 isCheckedOut: isCheckedOut,
+                isPaidHoliday: isPaidHoliday, 
               ),
             );
             widget.onSave();
