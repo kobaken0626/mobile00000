@@ -8,14 +8,18 @@ void main() {
 /// データモデル
 /// ------------------------------
 class Job {
-  final String name;
-  final int weekdayWage;
-  final int holidayWage;
+  String name;
+  int weekdayWage;
+  int holidayWage;
+  int payDay;       // ★ 追加：給料日（例: 25）
+  int closingDay;   // ★ 追加：締め日（例: 30）
 
   Job({
     required this.name,
     required this.weekdayWage,
     required this.holidayWage,
+    required this.payDay,
+    required this.closingDay,
   });
 }
 
@@ -101,20 +105,19 @@ class _MainScreenState extends State<MainScreen> {
   DateTime selectedCalendarDate = DateTime.now();
   DateTime currentMonthView = DateTime.now(); 
 
+  // サンプル用のマスターデータ（初期項目を拡張）
   final List<Job> jobs = [
-    Job(name: 'コンビニA', weekdayWage: 1100, holidayWage: 1200),
-    Job(name: '居酒屋B', weekdayWage: 1200, holidayWage: 1400),
+    Job(name: 'コンビニA', weekdayWage: 1100, holidayWage: 1200, payDay: 25, closingDay: 31),
+    Job(name: '居酒屋B', weekdayWage: 1200, holidayWage: 1400, payDay: 15, closingDay: 30),
   ];
 
   final List<Shift> shifts = [];
 
-  // 今日のシフト予定が存在するかチェックする関数
   bool hasTodayShiftScheduled() {
     final today = DateTime.now();
     return shifts.any((s) => s.date.day == today.day && s.date.month == today.month && s.date.year == today.year);
   }
 
-  // ★ 追加：今日のシフトが「すでに退勤済みかどうか」を判定する関数
   bool isTodayAlreadyCheckedOut() {
     final today = DateTime.now();
     final todayShifts = shifts.where((s) => s.date.day == today.day && s.date.month == today.month && s.date.year == today.year).toList();
@@ -124,11 +127,8 @@ class _MainScreenState extends State<MainScreen> {
 
   void addQuickCheckOutShift() {
     if (jobs.isEmpty) return;
-    
     final today = DateTime.now();
-    
     if (!hasTodayShiftScheduled()) return;
-    // ★ すでに退勤済みなら処理を行わない（ガード）
     if (isTodayAlreadyCheckedOut()) return;
 
     final existingShift = shifts.firstWhere((s) => s.date.day == today.day && s.date.month == today.month && s.date.year == today.year);
@@ -150,7 +150,6 @@ class _MainScreenState extends State<MainScreen> {
 
     setState(() {
       shifts.removeWhere((s) => s.date.day == today.day && s.date.month == today.month && s.date.year == today.year);
-
       shifts.add(
         Shift(
           date: today,
@@ -162,7 +161,7 @@ class _MainScreenState extends State<MainScreen> {
           endHour: endHour,
           endMinute: endMinute, 
           breakMinutes: breakMin, 
-          isCheckedOut: true, // 退勤済みにする
+          isCheckedOut: true, 
           isPaidHoliday: false,
         ),
       );
@@ -222,9 +221,8 @@ class _MainScreenState extends State<MainScreen> {
     final screens = [
       HomeScreen(
         shifts: shifts, 
-        // ★ 予定があり、かつ、まだ退勤していない時だけボタンを有効化する
         isButtonEnabled: hasTodayShiftScheduled() && !isTodayAlreadyCheckedOut(), 
-        isAlreadyCheckedOut: isTodayAlreadyCheckedOut(), // 退勤済み状態をホームに教える
+        isAlreadyCheckedOut: isTodayAlreadyCheckedOut(), 
         onQuickCheckOut: addQuickCheckOutShift,
       ),
       CalendarScreen(
@@ -240,7 +238,13 @@ class _MainScreenState extends State<MainScreen> {
         onEditPressed: () => showShiftInputDialog(selectedCalendarDate), 
         onDeletePressed: deleteShift, 
       ),
-      AccountScreen(jobs: jobs, shifts: shifts),
+      AccountScreen(
+        jobs: jobs, 
+        shifts: shifts,
+        onJobsChanged: () {
+          setState(() {}); // アルバイト情報が更新されたらアプリ全体をリフレッシュ
+        },
+      ),
     ];
 
     return Scaffold(
@@ -264,18 +268,18 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 /// ------------------------------
-/// ホーム画面（★一回押したら完了ロック状態に切り替わる）
+/// ホーム画面
 /// ------------------------------
 class HomeScreen extends StatelessWidget {
   final List<Shift> shifts;
   final bool isButtonEnabled; 
-  final bool isAlreadyCheckedOut; // ★追加：今日すでに退勤したかどうか
+  final bool isAlreadyCheckedOut; 
   final VoidCallback onQuickCheckOut;
 
   const HomeScreen({
     required this.shifts, 
     required this.isButtonEnabled, 
-    required this.isAlreadyCheckedOut, // ★
+    required this.isAlreadyCheckedOut, 
     required this.onQuickCheckOut, 
     super.key,
   });
@@ -288,8 +292,7 @@ class HomeScreen extends StatelessWidget {
 
     final earned = monthShifts.fold(0, (sum, s) => sum + s.salary);
 
-    // ★ 状態メッセージとボタンラベル、アイコンの動的切り替え
-    String buttonText = '本日の予定なし';
+    String buttonText = '退勤ボタンロック中 (本日の予定なし)';
     IconData buttonIcon = Icons.lock;
     String noticeText = '※本日のシフト予定がカレンダーに登録されていないため、退勤記録は押せません。';
     Color noticeColor = Colors.red.shade700;
@@ -300,9 +303,9 @@ class HomeScreen extends StatelessWidget {
       noticeText = '※本日の退勤記録はすでに完了しています。修正したい場合はカレンダー画面からおこなってください。';
       noticeColor = Colors.green.shade700;
     } else if (isButtonEnabled) {
-      buttonText = '今すぐ退勤を記録';
+      buttonText = '今すぐ退勤を記録 (リアルタイム反映)';
       buttonIcon = Icons.logout;
-      noticeText = '※ボタンを押すと、カレンダーに登録された本日のシフト予定に退勤時間を反映します。';
+      noticeText = '※ボタンを押すと、カレンダーに登録された本日のシフト予定にリアルタイムの退勤時間を上書き反映します。';
       noticeColor = Colors.grey;
     }
 
@@ -340,9 +343,9 @@ class HomeScreen extends StatelessWidget {
               ElevatedButton.icon(
                 onPressed: isButtonEnabled ? onQuickCheckOut : null, 
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: isButtonEnabled ? Colors.redAccent : Colors.black, // 予定なし、または退勤済みは「黒（ロック）」
+                  backgroundColor: isButtonEnabled ? Colors.redAccent : Colors.black, 
                   foregroundColor: Colors.white,
-                  disabledBackgroundColor: isAlreadyCheckedOut ? const Color(0xFF2E7D32) : Colors.black87, // ★退勤済みなら完了を意味する緑、その他は黒
+                  disabledBackgroundColor: isAlreadyCheckedOut ? const Color(0xFF2E7D32) : Colors.black87, 
                   disabledForegroundColor: Colors.white, 
                   padding: const EdgeInsets.symmetric(vertical: 20),
                   textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -941,13 +944,86 @@ class _ShiftInputSheetState extends State<ShiftInputSheet> {
 }
 
 /// ------------------------------
-/// アカウント画面
+/// アカウント画面（★アルバイト編集・変更・追加機能をフル実装）
 /// ------------------------------
 class AccountScreen extends StatelessWidget {
   final List<Job> jobs;
   final List<Shift> shifts;
+  final VoidCallback onJobsChanged; // マスターデータ変更通知用
 
-  const AccountScreen({required this.jobs, required this.shifts, super.key});
+  const AccountScreen({required this.jobs, required this.shifts, required this.onJobsChanged, super.key});
+
+  // アルバイト情報の追加・編集ダイアログを開く関数
+  void _showJobEditDialog(BuildContext context, {Job? existingJob}) {
+    final nameController = TextEditingController(text: existingJob?.name ?? '');
+    final weekdayWageController = TextEditingController(text: existingJob?.weekdayWage.toString() ?? '');
+    final holidayWageController = TextEditingController(text: existingJob?.holidayWage.toString() ?? '');
+    final payDayController = TextEditingController(text: existingJob?.payDay.toString() ?? '25');
+    final closingDayController = TextEditingController(text: existingJob?.closingDay.toString() ?? '30');
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(existingJob == null ? '新しいアルバイト情報を追加' : 'アルバイト情報を編集'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: nameController, decoration: const InputDecoration(labelText: 'アルバイト名', border: OutlineInputBorder())),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(child: TextField(controller: weekdayWageController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '平日時給', border: OutlineInputBorder()))),
+                    const SizedBox(width: 12),
+                    Expanded(child: TextField(controller: holidayWageController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '休日時給', border: OutlineInputBorder()))),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(child: TextField(controller: payDayController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '給料日 (日)', border: OutlineInputBorder()))),
+                    const SizedBox(width: 12),
+                    Expanded(child: TextField(controller: closingDayController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '締め日 (日)', border: OutlineInputBorder()))),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル', style: TextStyle(color: Colors.grey))),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF689F38), foregroundColor: Colors.white),
+              onPressed: () {
+                if (nameController.text.isEmpty || weekdayWageController.text.isEmpty || holidayWageController.text.isEmpty) return;
+
+                if (existingJob == null) {
+                  // 新規追加
+                  jobs.add(Job(
+                    name: nameController.text,
+                    weekdayWage: int.parse(weekdayWageController.text),
+                    holidayWage: int.parse(holidayWageController.text),
+                    payDay: int.parse(payDayController.text),
+                    closingDay: int.parse(closingDayController.text),
+                  ));
+                } else {
+                  // 既存のデータを上書き修正
+                  existingJob.name = nameController.text;
+                  existingJob.weekdayWage = int.parse(weekdayWageController.text);
+                  existingJob.holidayWage = int.parse(holidayWageController.text);
+                  existingJob.payDay = int.parse(payDayController.text);
+                  existingJob.closingDay = int.parse(closingDayController.text);
+                }
+                onJobsChanged(); // 画面リフレッシュ
+                Navigator.pop(context);
+              },
+              child: const Text('保存'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -994,17 +1070,58 @@ class AccountScreen extends StatelessWidget {
                   trailing: Text('${shifts.length} 回', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 ),
                 const Divider(height: 40),
-                const Text('登録中のアルバイト情報', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
+                
+                // ★ アルバイト情報セクション（編集ボタンと新規追加を追加）
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('登録中のアルバイト情報', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    ElevatedButton.icon(
+                      onPressed: () => _showJobEditDialog(context),
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF689F38), foregroundColor: Colors.white),
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('追加', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
                 if (jobs.isEmpty)
-                  const Text('登録されているバイト先はありません。')
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Text('登録されているバイト先はありません。右上のボタンから追加してください。', style: TextStyle(color: Colors.grey)),
+                  )
                 else
                   ...jobs.map((j) => Card(
                         margin: const EdgeInsets.symmetric(vertical: 6),
+                        elevation: 1,
                         child: ListTile(
                           leading: const Icon(Icons.work, color: Color(0xFF689F38)),
                           title: Text(j.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text('平日: ¥${j.weekdayWage} / 休日: ¥${j.holidayWage}'),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 4),
+                              Text('時給: 平日 ¥${j.weekdayWage} / 休日 ¥${j.holidayWage}'),
+                              Text('締め日: 毎月 ${j.closingDay}日 / 給料日: 毎月 ${j.payDay}日', style: const TextStyle(color: Colors.black54, fontSize: 12)),
+                            ],
+                          ),
+                          // 右側の編集＆削除アクションボタン
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
+                                onPressed: () => _showJobEditDialog(context, existingJob: j),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete, color: Colors.redAccent, size: 20),
+                                onPressed: () {
+                                  jobs.remove(j);
+                                  onJobsChanged();
+                                },
+                              ),
+                            ],
+                          ),
                         ),
                       )),
               ],
