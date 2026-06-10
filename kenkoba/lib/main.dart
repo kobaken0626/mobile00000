@@ -108,37 +108,48 @@ class _MainScreenState extends State<MainScreen> {
 
   final List<Shift> shifts = [];
 
+  // 今日のシフト予定が存在するかチェックする関数
+  bool hasTodayShiftScheduled() {
+    final today = DateTime.now();
+    return shifts.any((s) => s.date.day == today.day && s.date.month == today.month && s.date.year == today.year);
+  }
+
   void addQuickCheckOutShift() {
     if (jobs.isEmpty) return;
     
     final today = DateTime.now();
-    final defaultJob = jobs.first;
-
-    const startHour = 10;       
-    const startMinute = 0;
     
+    // ★ 安全策：もし今日の予定が入っていないのに呼び出されたらガードする
+    if (!hasTodayShiftScheduled()) return;
+
+    // 現在入っている今日の予定ベースで時給などを引き継ぐ
+    final existingShift = shifts.firstWhere((s) => s.date.day == today.day && s.date.month == today.month && s.date.year == today.year);
+
+    final startHour = existingShift.startHour;       
+    final startMinute = existingShift.startMinute;
     final endHour = today.hour;     
     final endMinute = today.minute; 
-    const breakMin = 0;          
+    final breakMin = existingShift.breakMinutes;          
 
     final startTotal = (startHour * 60) + startMinute;
     final endTotal = (endHour * 60) + endMinute;
     if ((endTotal - startTotal) <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('出勤時間（10:00）を過ぎてから退勤を押してください')),
+        const SnackBar(content: Text('出勤時間を過ぎてから退勤を押してください')),
       );
       return;
     }
 
     setState(() {
+      // 既存の予定を削除して、リアルタイム退勤データとして上書き
       shifts.removeWhere((s) => s.date.day == today.day && s.date.month == today.month && s.date.year == today.year);
 
       shifts.add(
         Shift(
           date: today,
-          jobName: defaultJob.name,
-          weekdayWage: defaultJob.weekdayWage,
-          holidayWage: defaultJob.holidayWage,
+          jobName: existingShift.jobName,
+          weekdayWage: existingShift.weekdayWage,
+          holidayWage: existingShift.holidayWage,
           startHour: startHour,
           startMinute: startMinute,
           endHour: endHour,
@@ -152,7 +163,20 @@ class _MainScreenState extends State<MainScreen> {
 
     final displayMinute = endMinute.toString().padLeft(2, '0');
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('退勤を完了しました！ ($startHour:00 〜 $endHour:$displayMinute)')),
+      SnackBar(content: Text('退勤を完了しました！ ($startHour:${startMinute.toString().padLeft(2, '0')} 〜 $endHour:$displayMinute)')),
+    );
+  }
+
+  // ★ 追加：指定した日付のシフトを削除する関数
+  void deleteShift(DateTime targetDate) {
+    setState(() {
+      shifts.removeWhere((s) =>
+          s.date.day == targetDate.day &&
+          s.date.month == targetDate.month &&
+          s.date.year == targetDate.year);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('勤務情報を削除しました')),
     );
   }
 
@@ -190,7 +214,12 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     final screens = [
-      HomeScreen(shifts: shifts, onQuickCheckOut: addQuickCheckOutShift),
+      HomeScreen(
+        shifts: shifts, 
+        // 今日の予定があるかリアルタイムで判定を渡す
+        isButtonEnabled: hasTodayShiftScheduled(), 
+        onQuickCheckOut: addQuickCheckOutShift,
+      ),
       CalendarScreen(
         shifts: shifts,
         selectedDate: selectedCalendarDate,
@@ -202,6 +231,7 @@ class _MainScreenState extends State<MainScreen> {
           });
         },
         onEditPressed: () => showShiftInputDialog(selectedCalendarDate), 
+        onDeletePressed: deleteShift, // 削除関数をカレンダー画面に引き渡す
       ),
       AccountScreen(jobs: jobs, shifts: shifts),
     ];
@@ -227,13 +257,19 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 /// ------------------------------
-/// ホーム画面
+/// ホーム画面（★退勤ボタンのロック機能搭載）
 /// ------------------------------
 class HomeScreen extends StatelessWidget {
   final List<Shift> shifts;
+  final bool isButtonEnabled; // ボタンが有効かどうか
   final VoidCallback onQuickCheckOut;
 
-  const HomeScreen({required this.shifts, required this.onQuickCheckOut, super.key});
+  const HomeScreen({
+    required this.shifts, 
+    required this.isButtonEnabled, 
+    required this.onQuickCheckOut, 
+    super.key,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -273,21 +309,28 @@ class HomeScreen extends StatelessWidget {
               const SizedBox(height: 40),
               const Text('ワンタップ記録', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
               const SizedBox(height: 12),
+              
+              // ★ 変更点：本日の予定有無によって色と機能を自動スイッチするボタン
               ElevatedButton.icon(
-                onPressed: onQuickCheckOut,
+                onPressed: isButtonEnabled ? onQuickCheckOut : null, // 無効時はnullにしてタップ不可にする
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.redAccent,
+                  backgroundColor: isButtonEnabled ? Colors.redAccent : Colors.black, // ★予定なしは黒、予定ありは赤
                   foregroundColor: Colors.white,
+                  disabledBackgroundColor: Colors.black87, // 無効時の背景色
+                  disabledForegroundColor: Colors.white54, // 無効時の文字色
                   padding: const EdgeInsets.symmetric(vertical: 20),
                   textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
-                icon: const Icon(Icons.logout, size: 24),
-                label: const Text('今すぐ退勤を記録 (10:00〜現在)'),
+                icon: Icon(isButtonEnabled ? Icons.logout : Icons.lock, size: 24),
+                label: Text(isButtonEnabled ? '今すぐ退勤を記録 (リアルタイム反映)' : '退勤ボタンロック中 (本日の予定なし)'),
               ),
+              
               const SizedBox(height: 12),
-              const Text(
-                '※既存のデータがある場合は自動で時間が上書きされ、「退勤済み」になります。',
-                style: TextStyle(fontSize: 13, color: Colors.grey),
+              Text(
+                isButtonEnabled 
+                    ? '※ボタンを押すと、カレンダーに登録された本日のシフト予定にリアルタイムの退勤時間を上書き反映します。' 
+                    : '※本日のシフト予定がカレンダーに登録されていないため、退勤記録は押せません。カレンダーから先に予定を追加してください。',
+                style: TextStyle(fontSize: 13, color: isButtonEnabled ? Colors.grey : Colors.red.shade700, fontWeight: isButtonEnabled ? FontWeight.normal : FontWeight.bold),
                 textAlign: TextAlign.center,
               )
             ],
@@ -299,7 +342,7 @@ class HomeScreen extends StatelessWidget {
 }
 
 /// ------------------------------
-/// カレンダー画面（★正確な曜日配置に修正）
+/// カレンダー画面（★削除ボタン搭載）
 /// ------------------------------
 class CalendarScreen extends StatelessWidget {
   final List<Shift> shifts;
@@ -308,6 +351,7 @@ class CalendarScreen extends StatelessWidget {
   final Function(int) onMonthChange; 
   final ValueChanged<DateTime> onDateSelected;
   final VoidCallback onEditPressed; 
+  final Function(DateTime) onDeletePressed; // ★ 追加：削除処理の受け取り
 
   const CalendarScreen({
     required this.shifts,
@@ -316,6 +360,7 @@ class CalendarScreen extends StatelessWidget {
     required this.onMonthChange,
     required this.onDateSelected,
     required this.onEditPressed,
+    required this.onDeletePressed, // ★
     super.key,
   });
 
@@ -329,16 +374,9 @@ class CalendarScreen extends StatelessWidget {
 
     final weekDays = ['日', '月', '火', '水', '木', '金', '土'];
 
-    // 💡 ★【重要】曜日を完全に合わせるための計算ロジック
-    // 1. 表示している月の「1日」の曜日を取得 (DateTime.sunday=7, DateTime.monday=1...)
     final firstDayOfMonth = DateTime(currentMonth.year, currentMonth.month, 1);
-    // 週の始まりを「日曜日（0）」にするため、Flutterの1(月)〜7(日)を変換
     final int startEmptySpaces = firstDayOfMonth.weekday == DateTime.sunday ? 0 : firstDayOfMonth.weekday;
-
-    // 2. 当月の末日（日数）を取得
     final totalDaysInMonth = DateTime(currentMonth.year, currentMonth.month + 1, 0).day;
-
-    // 3. グリッドに並べる総マス数（空白マス ＋ 当月の日数）
     final totalGridItems = startEmptySpaces + totalDaysInMonth;
 
     return Scaffold(
@@ -410,14 +448,12 @@ class CalendarScreen extends StatelessWidget {
                         crossAxisCount: 7,
                         childAspectRatio: 1.4, 
                       ),
-                      itemCount: totalGridItems, // ★ 空白を含めた総マス数に変更
+                      itemCount: totalGridItems, 
                       itemBuilder: (context, index) {
-                        // 1日の曜日より手前のマスは、前月の「空白マス」として描画する
                         if (index < startEmptySpaces) {
-                          return const SizedBox(); // 何も表示しない空のマス
+                          return const SizedBox(); 
                         }
 
-                        // 実際の「日にち」を割り出す
                         final day = index - startEmptySpaces + 1;
                         final targetDate = DateTime(currentMonth.year, currentMonth.month, day);
                         final isSelected = selectedDate.day == day && selectedDate.month == currentMonth.month && selectedDate.year == currentMonth.year;
@@ -590,19 +626,46 @@ class CalendarScreen extends StatelessWidget {
                   
                   const Divider(),
                   const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 45,
-                    child: ElevatedButton.icon(
-                      onPressed: onEditPressed,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF689F38),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  
+                  // ボタン群のコンテナ
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // 1. 修正・新規追加ボタン
+                      SizedBox(
+                        width: double.infinity,
+                        height: 40,
+                        child: ElevatedButton.icon(
+                          onPressed: onEditPressed,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF689F38),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          icon: const Icon(Icons.edit, size: 16),
+                          label: Text(currentShift == null ? '情報を新規追加' : '勤務情報を修正', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                        ),
                       ),
-                      icon: const Icon(Icons.edit, size: 18),
-                      label: Text(currentShift == null ? '情報を新規追加' : '勤務情報を修正', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                    ),
+                      
+                      // 2. ★ 追加点：削除ボタン（データが存在するときだけ表示）
+                      if (currentShift != null) ...[
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 40,
+                          child: OutlinedButton.icon(
+                            onPressed: () => onDeletePressed(selectedDate),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.redAccent, width: 1.5),
+                              foregroundColor: Colors.redAccent,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            icon: const Icon(Icons.delete_forever, size: 16),
+                            label: const Text('この日の勤務情報を削除', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),
