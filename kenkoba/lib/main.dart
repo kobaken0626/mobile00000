@@ -11,8 +11,8 @@ class Job {
   String name;
   int weekdayWage;
   int holidayWage;
-  int payDay;       // ★ 追加：給料日（例: 25）
-  int closingDay;   // ★ 追加：締め日（例: 30）
+  int payDay;       
+  int closingDay;   
 
   Job({
     required this.name,
@@ -105,7 +105,6 @@ class _MainScreenState extends State<MainScreen> {
   DateTime selectedCalendarDate = DateTime.now();
   DateTime currentMonthView = DateTime.now(); 
 
-  // サンプル用のマスターデータ（初期項目を拡張）
   final List<Job> jobs = [
     Job(name: 'コンビニA', weekdayWage: 1100, holidayWage: 1200, payDay: 25, closingDay: 31),
     Job(name: '居酒屋B', weekdayWage: 1200, holidayWage: 1400, payDay: 15, closingDay: 30),
@@ -242,7 +241,7 @@ class _MainScreenState extends State<MainScreen> {
         jobs: jobs, 
         shifts: shifts,
         onJobsChanged: () {
-          setState(() {}); // アルバイト情報が更新されたらアプリ全体をリフレッシュ
+          setState(() {}); 
         },
       ),
     ];
@@ -268,7 +267,7 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 /// ------------------------------
-/// ホーム画面
+/// ホーム画面（★新機能：今日・今月の詳細サマリーデータをフル表示）
 /// ------------------------------
 class HomeScreen extends StatelessWidget {
   final List<Shift> shifts;
@@ -286,12 +285,27 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final monthShifts =
-        shifts.where((s) => s.date.month == now.month && s.date.year == now.year).toList();
+    final today = DateTime.now();
+    
+    // ① 今月のすべてのシフトを抽出
+    final monthShifts = shifts.where((s) => s.date.month == today.month && s.date.year == today.year).toList();
+    // ★ 今月の全体給料金額
+    final totalEarnedMonth = monthShifts.fold(0, (sum, s) => sum + s.salary);
 
-    final earned = monthShifts.fold(0, (sum, s) => sum + s.salary);
+    // ② 今日のシフトを抽出（1日1スロット想定）
+    final todayShifts = shifts.where((s) => s.date.day == today.day && s.date.month == today.month && s.date.year == today.year).toList();
+    // ★ 今日稼いだ（稼ぐ予定の）金額
+    final todayEarned = todayShifts.isNotEmpty ? todayShifts.first.salary : 0;
 
+    // ③ 今月残っている（まだ退勤チェックがついていない）未完了シフトを計算
+    final remainingShifts = monthShifts.where((s) => !s.isCheckedOut && !s.isPaidHoliday).toList();
+    // ★ シフトがあと何日
+    final remainingDays = remainingShifts.length;
+    // ★ シフトがあと何時間
+    final remainingMinutes = remainingShifts.fold(0, (sum, s) => sum + s.workMinutes);
+    final remainingHours = (remainingMinutes / 60).toStringAsFixed(1);
+
+    // 退勤ボタンのラベル切り替え制御
     String buttonText = '退勤ボタンロック中 (本日の予定なし)';
     IconData buttonIcon = Icons.lock;
     String noticeText = '※本日のシフト予定がカレンダーに登録されていないため、退勤記録は押せません。';
@@ -316,30 +330,66 @@ class HomeScreen extends StatelessWidget {
       ),
       body: Center(
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 600), 
+          constraints: const BoxConstraints(maxWidth: 650), 
           padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // 🏆 メインサマリーカード（今月の全体給料 ＆ 今日稼いだ金額）
               Card(
                 elevation: 4,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('今月のシフト日数：${monthShifts.length}日', style: const TextStyle(fontSize: 20)),
-                      const SizedBox(height: 16),
-                      Text('今月の給料：¥$earned', style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Color(0xFF689F38))),
+                      // ★ 1. 今月の全体給料金額表示
+                      Text('${today.month}月の全体給料（確定・見込）', style: const TextStyle(fontSize: 15, color: Colors.black54, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 4),
+                      Text('¥$totalEarnedMonth', style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: Color(0xFF689F38))),
+                      
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Divider(),
+                      ),
+                      
+                      // 📊 2列分割データ（今日稼いだ金額 ＆ 残りの目標）
+                      Row(
+                        children: [
+                          // ★ 2. 今日稼いだ金額
+                          Expanded(
+                            child: Column(
+                              children: [
+                                const Text('今日稼いだ金額', style: TextStyle(fontSize: 13, color: Colors.black54)),
+                                const SizedBox(height: 4),
+                                Text('¥$todayEarned', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.orange)),
+                              ],
+                            ),
+                          ),
+                          Container(width: 1, height: 40, color: Colors.grey.shade300), // 区切り線
+                          // ★ 3. シフトがあと何日/何時間
+                          Expanded(
+                            child: Column(
+                              children: [
+                                const Text('今月の残りシフト', style: TextStyle(fontSize: 13, color: Colors.black54)),
+                                const SizedBox(height: 4),
+                                Text('あと $remainingDays 日 / $remainingHours 時間', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.indigo)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
               ),
+              
               const SizedBox(height: 40),
               const Text('ワンタップ記録', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
               const SizedBox(height: 12),
               
+              // 退勤ボタンスイッチ
               ElevatedButton.icon(
                 onPressed: isButtonEnabled ? onQuickCheckOut : null, 
                 style: ElevatedButton.styleFrom(
@@ -665,7 +715,7 @@ class CalendarScreen extends StatelessWidget {
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                           ),
                           icon: const Icon(Icons.edit, size: 16),
-                          label: Text(currentShift == null ? '情報を新規追加' : '勤務情報を修正', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                          label: const Text('情報を新規追加・修正', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
                         ),
                       ),
                       
@@ -944,16 +994,15 @@ class _ShiftInputSheetState extends State<ShiftInputSheet> {
 }
 
 /// ------------------------------
-/// アカウント画面（★アルバイト編集・変更・追加機能をフル実装）
+/// アカウント画面
 /// ------------------------------
 class AccountScreen extends StatelessWidget {
   final List<Job> jobs;
   final List<Shift> shifts;
-  final VoidCallback onJobsChanged; // マスターデータ変更通知用
+  final VoidCallback onJobsChanged; 
 
   const AccountScreen({required this.jobs, required this.shifts, required this.onJobsChanged, super.key});
 
-  // アルバイト情報の追加・編集ダイアログを開く関数
   void _showJobEditDialog(BuildContext context, {Job? existingJob}) {
     final nameController = TextEditingController(text: existingJob?.name ?? '');
     final weekdayWageController = TextEditingController(text: existingJob?.weekdayWage.toString() ?? '');
@@ -998,7 +1047,6 @@ class AccountScreen extends StatelessWidget {
                 if (nameController.text.isEmpty || weekdayWageController.text.isEmpty || holidayWageController.text.isEmpty) return;
 
                 if (existingJob == null) {
-                  // 新規追加
                   jobs.add(Job(
                     name: nameController.text,
                     weekdayWage: int.parse(weekdayWageController.text),
@@ -1007,14 +1055,13 @@ class AccountScreen extends StatelessWidget {
                     closingDay: int.parse(closingDayController.text),
                   ));
                 } else {
-                  // 既存のデータを上書き修正
                   existingJob.name = nameController.text;
                   existingJob.weekdayWage = int.parse(weekdayWageController.text);
                   existingJob.holidayWage = int.parse(holidayWageController.text);
                   existingJob.payDay = int.parse(payDayController.text);
                   existingJob.closingDay = int.parse(closingDayController.text);
                 }
-                onJobsChanged(); // 画面リフレッシュ
+                onJobsChanged(); 
                 Navigator.pop(context);
               },
               child: const Text('保存'),
@@ -1071,7 +1118,6 @@ class AccountScreen extends StatelessWidget {
                 ),
                 const Divider(height: 40),
                 
-                // ★ アルバイト情報セクション（編集ボタンと新規追加を追加）
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -1105,7 +1151,6 @@ class AccountScreen extends StatelessWidget {
                               Text('締め日: 毎月 ${j.closingDay}日 / 給料日: 毎月 ${j.payDay}日', style: const TextStyle(color: Colors.black54, fontSize: 12)),
                             ],
                           ),
-                          // 右側の編集＆削除アクションボタン
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
