@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
-import 'main.dart'; // Shiftモデルの読み込み用
+import 'main.dart';
 
 class HomeScreen extends StatelessWidget {
   final List<Shift> shifts;
-  final bool isButtonEnabled; 
-  final bool isAlreadyCheckedOut; 
+  final bool isButtonEnabled;
+  final bool isAlreadyCheckedOut;
   final VoidCallback onQuickCheckOut;
 
   const HomeScreen({
-    required this.shifts, 
-    required this.isButtonEnabled, 
-    required this.isAlreadyCheckedOut, 
-    required this.onQuickCheckOut, 
+    required this.shifts,
+    required this.isButtonEnabled,
+    required this.isAlreadyCheckedOut,
+    required this.onQuickCheckOut,
     super.key,
   });
 
@@ -19,6 +19,7 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final today = DateTime.now();
     
+    // 給料・残日数の計算ロジック
     final monthShifts = shifts.where((s) => s.date.month == today.month && s.date.year == today.year).toList();
     final totalEarnedMonth = monthShifts.fold(0, (sum, s) => sum + s.salary);
 
@@ -30,6 +31,7 @@ class HomeScreen extends StatelessWidget {
     final remainingMinutes = remainingShifts.fold(0, (sum, s) => sum + s.workMinutes);
     final remainingHours = (remainingMinutes / 60).toStringAsFixed(1);
 
+    // ボタンのテキストと案内文の動的切り替え
     String buttonText = '退勤ボタンロック中 (本日の予定なし)';
     IconData buttonIcon = Icons.lock;
     String noticeText = '※本日のシフト予定がカレンダーに登録されていないため、退勤記録は押せません。';
@@ -120,7 +122,11 @@ class HomeScreen extends StatelessWidget {
               const SizedBox(height: 12),
               Text(
                 noticeText,
-                style: TextStyle(fontSize: 13, color: noticeColor, fontWeight: isButtonEnabled ? FontWeight.normal : FontWeight.bold),
+                style: TextStyle(
+                  fontSize: 13, 
+                  color: noticeColor, 
+                  fontWeight: isButtonEnabled ? FontWeight.normal : FontWeight.bold
+                ),
                 textAlign: TextAlign.center,
               )
             ],

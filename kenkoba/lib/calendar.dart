@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'main.dart'; // Shiftモデルの読み込み用
+import 'main.dart';
 
 class CalendarScreen extends StatelessWidget {
   final List<Shift> shifts;

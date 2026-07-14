@@ -3,6 +3,7 @@ import 'home.dart';
 import 'calendar.dart';
 import 'account.dart';
 import 'detail/calendarDetail.dart';
+import 'shiftStorageService.dart'; // ← 追加
 
 void main() {
   runApp(const MyApp());
@@ -29,7 +30,7 @@ class Job {
 
 class Shift {
   final DateTime date;
-  final String jobName;       
+  final String jobName;      
   final int weekdayWage;      
   final int holidayWage;      
   final int startHour;
@@ -67,6 +68,39 @@ class Shift {
         date.weekday == DateTime.sunday;
     final hourlyWage = isHoliday ? holidayWage : weekdayWage;
     return (workMinutes / 60 * hourlyWage).round();
+  }
+
+  // --- Map変換ロジック（用意されていない場合はこちらを参考にしてください） ---
+  Map<String, dynamic> toMap() {
+    return {
+      'date': date.toIso8601String(),
+      'jobName': jobName,
+      'weekdayWage': weekdayWage,
+      'holidayWage': holidayWage,
+      'startHour': startHour,
+      'startMinute': startMinute,
+      'endHour': endHour,
+      'endMinute': endMinute,
+      'breakMinutes': breakMinutes,
+      'isCheckedOut': isCheckedOut,
+      'isPaidHoliday': isPaidHoliday,
+    };
+  }
+
+  factory Shift.fromMap(Map<String, dynamic> map) {
+    return Shift(
+      date: DateTime.parse(map['date']),
+      jobName: map['jobName'],
+      weekdayWage: map['weekdayWage'],
+      holidayWage: map['holidayWage'],
+      startHour: map['startHour'],
+      startMinute: map['startMinute'],
+      endHour: map['endHour'],
+      endMinute: map['endMinute'],
+      breakMinutes: map['breakMinutes'],
+      isCheckedOut: map['isCheckedOut'] ?? false,
+      isPaidHoliday: map['isPaidHoliday'] ?? false,
+    );
   }
 }
 
@@ -114,7 +148,37 @@ class _MainScreenState extends State<MainScreen> {
     Job(name: '居酒屋B', weekdayWage: 1200, holidayWage: 1400, payDay: 15, closingDay: 30),
   ];
 
-  final List<Shift> shifts = [];
+  List<Shift> shifts = []; // lateではなく空リストで初期化
+
+  @override
+  void initState() {
+    super.initState();
+    _loadShiftsData(); // 起動時にデータを読み込む
+  }
+
+  // --- データの読み込み処理 ---
+  Future<void> _loadShiftsData() async {
+    try {
+      final savedData = await ShiftStorageService.loadShifts();
+      if (savedData.isNotEmpty) {
+        setState(() {
+          shifts = savedData.map((map) => Shift.fromMap(map)).toList();
+        });
+      }
+    } catch (e) {
+      debugPrint("データ読み込みエラー: $e");
+    }
+  }
+
+  // --- データの保存処理 ---
+  Future<void> _saveShiftsData() async {
+    try {
+      final mapList = shifts.map((shift) => shift.toMap()).toList();
+      await ShiftStorageService.saveShifts(mapList);
+    } catch (e) {
+      debugPrint("データ保存エラー: $e");
+    }
+  }
 
   bool hasTodayShiftScheduled() {
     final today = DateTime.now();
@@ -128,7 +192,7 @@ class _MainScreenState extends State<MainScreen> {
     return todayShifts.first.isCheckedOut;
   }
 
-  void addQuickCheckOutShift() {
+  void addQuickCheckOutShift() async {
     if (jobs.isEmpty) return;
     final today = DateTime.now();
     if (!hasTodayShiftScheduled()) return;
@@ -136,7 +200,7 @@ class _MainScreenState extends State<MainScreen> {
 
     final existingShift = shifts.firstWhere((s) => s.date.day == today.day && s.date.month == today.month && s.date.year == today.year);
 
-    final startHour = existingShift.startHour;       
+    final startHour = existingShift.startHour;      
     final startMinute = existingShift.startMinute;
     final endHour = today.hour;     
     final endMinute = today.minute; 
@@ -152,6 +216,7 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     setState(() {
+      // 本日のシフトを削除して、新しく退勤済みのシフトを追加（再生成）
       shifts.removeWhere((s) => s.date.day == today.day && s.date.month == today.month && s.date.year == today.year);
       shifts.add(
         Shift(
@@ -170,19 +235,27 @@ class _MainScreenState extends State<MainScreen> {
       );
     });
 
+    // データをローカルに保存
+    await _saveShiftsData();
+
     final displayMinute = endMinute.toString().padLeft(2, '0');
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('退勤を完了しました！ ($startHour:${startMinute.toString().padLeft(2, '0')} 〜 $endHour:$displayMinute)')),
+      SnackBar(
+        content: Text('お疲れ様でした！退勤を記録しました。 ($startHour:${startMinute.toString().padLeft(2, '0')} 〜 $endHour:$displayMinute)'),
+        backgroundColor: const Color(0xFF689F38),
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
-  void deleteShift(DateTime targetDate) {
+  void deleteShift(DateTime targetDate) async {
     setState(() {
       shifts.removeWhere((s) =>
           s.date.day == targetDate.day &&
           s.date.month == targetDate.month &&
           s.date.year == targetDate.year);
     });
+    await _saveShiftsData(); // 削除時も保存
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('勤務情報を削除しました')),
     );
@@ -201,9 +274,10 @@ class _MainScreenState extends State<MainScreen> {
               jobs: jobs,
               shifts: shifts,
               initialDate: targetDate,
-              onSave: () {
+              onSave: () async {
                 setState(() {}); 
-                Navigator.pop(context); 
+                await _saveShiftsData(); // ダイアログでの追加・編集時も保存
+                if (context.mounted) Navigator.pop(context); 
               },
             ),
           ),

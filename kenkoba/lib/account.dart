@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'main.dart'; // Job, Shiftモデルの読み込み用
+import 'main.dart';
 
 class AccountScreen extends StatelessWidget {
   final List<Job> jobs;

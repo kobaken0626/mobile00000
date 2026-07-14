@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../main.dart'; // 親ディレクトリのモデル群を読み込み
+import '../main.dart';
 
 class ShiftInputSheet extends StatefulWidget {
   final List<Job> jobs;
